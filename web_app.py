@@ -61,6 +61,23 @@ def df_to_json_records(df):
     return records
 
 
+KEY_FILE = Path.home() / ".alphagenome_key"
+
+def get_stored_api_key():
+    k = os.environ.get("ALPHAGENOME_API_KEY")
+    if k and len(k.strip()) > 5:
+        return k.strip()
+    if KEY_FILE.exists():
+        try:
+            stored = KEY_FILE.read_text().strip()
+            if stored and len(stored) > 5:
+                os.environ["ALPHAGENOME_API_KEY"] = stored
+                return stored
+        except Exception:
+            pass
+    return None
+
+
 class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
@@ -151,7 +168,7 @@ class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def handle_api_status(self):
-        api_key = os.environ.get("ALPHAGENOME_API_KEY")
+        api_key = get_stored_api_key()
         self.send_json({
             "has_key": bool(api_key and len(api_key.strip()) > 5),
             "cache_dir": str(cli.DEFAULT_CACHE_DIR),
@@ -164,6 +181,10 @@ class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
             self.send_error_json("API anahtarı boş olamaz")
             return
         os.environ["ALPHAGENOME_API_KEY"] = key
+        try:
+            KEY_FILE.write_text(key)
+        except Exception:
+            pass
         self.send_json({"success": True, "message": "API anahtarı güncellendi"})
 
     def handle_api_scorers(self):
@@ -209,14 +230,59 @@ class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
             self.send_error_json("Varyant belirtilmedi")
             return
 
-        if not os.environ.get("ALPHAGENOME_API_KEY"):
-            self.send_error_json("AlphaGenome API anahtarı bulunamadı. Lütfen sağ üstteki ayarlar simgesinden API anahtarınızı girin.")
-            return
-
         try:
             var_obj = cli.parse_variant(var_str)
         except Exception as e:
             self.send_error_json(f"Geçersiz varyant formatı ({var_str}): {e}")
+            return
+
+        # 1. Önbellekten hızlı servis kontrolü (Atlas)
+        if engine == "atlas":
+            try:
+                cached_client = cli.CachedAtlasClient(None, enabled=True)
+                terms = cli.resolve_tissue_term(tissue) if tissue else None
+                genes = [gene] if gene else None
+                key = cli._cache_key(
+                    "variant",
+                    var_obj.chromosome, var_obj.position, var_obj.reference_bases, var_obj.alternate_bases,
+                    tuple(),
+                    tuple(sorted(str(o) for o in (terms or []))),
+                    tuple(),
+                    tuple(sorted(genes or [])),
+                )
+                hit, cached_scores = cached_client._load(key)
+                if not hit:
+                    import glob, pickle
+                    for cf in glob.glob(str(cli.DEFAULT_CACHE_DIR / "atlas_*.pkl")):
+                        try:
+                            with open(cf, "rb") as f:
+                                d = pickle.load(f)
+                            if isinstance(d, dict) and "AVI_SCORE" in d and d["AVI_SCORE"] is not None:
+                                v_str = str(d["AVI_SCORE"].obs.iloc[0]["variant"])
+                                if v_str == var_str:
+                                    cached_scores = d
+                                    hit = True
+                                    break
+                        except Exception:
+                            continue
+
+                if hit and cached_scores:
+                    df = cli.tidy_atlas_scores(cached_scores)
+                    records = df_to_json_records(df)
+                    avi_summary = cli.extract_atlas_summary(cached_scores)
+                    self.send_json({
+                        "scores": records,
+                        "variant": var_str,
+                        "engine": "atlas",
+                        "avi_summary": avi_summary,
+                    })
+                    return
+            except Exception:
+                pass
+
+        api_key = get_stored_api_key()
+        if not api_key:
+            self.send_error_json("AlphaGenome API anahtarı bulunamadı. Lütfen sağ üstteki ayarlar simgesinden API anahtarınızı girin.")
             return
 
         class DummyArgs:
@@ -237,7 +303,13 @@ class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
                 )
                 df = cli.tidy_atlas_scores(raw_scores)
                 records = df_to_json_records(df)
-                self.send_json({"scores": records, "variant": var_str, "engine": "atlas"})
+                avi_summary = cli.extract_atlas_summary(raw_scores)
+                self.send_json({
+                    "scores": records,
+                    "variant": var_str,
+                    "engine": "atlas",
+                    "avi_summary": avi_summary,
+                })
             else:
                 # Model inference
                 model = cli.create_model(DummyArgs())
@@ -363,7 +435,8 @@ class AlphaGenomeWebHandler(BaseHTTPRequestHandler):
                 )
                 df = cli.tidy_atlas_scores(raw_scores)
                 records = df_to_json_records(df)
-                self.send_json({"scores": records, "count": len(variants)})
+                avi_summary = cli.extract_atlas_summary(raw_scores)
+                self.send_json({"scores": records, "count": len(variants), "avi_summary": avi_summary})
             else:
                 # Model inference batch
                 model = cli.create_model(DummyArgs())

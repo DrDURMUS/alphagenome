@@ -96,6 +96,19 @@ const i18n = {
     btn_prev: "Önceki",
     btn_next: "Sonraki",
 
+    // Official Atlas Portal
+    badge_variant_text: "Varyant",
+    atlas_official_api: "AlphaGenome Atlas (DeepMind)",
+    atlas_avi_title: "AVI score",
+    atlas_phred_unit: "Phred Score",
+    atlas_fi_heading: "Feature importance",
+    atlas_col_biosample: "Doku / Hücre Tipi",
+    atlas_col_delta: "Δ Skor",
+    atlas_pos_label: "Pozitif",
+    atlas_neg_label: "Negatif",
+    atlas_feature_breakdown: "Özellik Dağılımı",
+    atlas_track_added_filter: "Tablo bu dokuya göre filtrelendi",
+
     // Modals
     settings_heading: "Sistem ve API Ayarları",
     label_api_key: "AlphaGenome API Anahtarı",
@@ -140,13 +153,13 @@ const i18n = {
     label_engine: "Analysis Engine",
     label_tissue_opt: "Tissue / Ontology (Optional)",
     label_gene_opt: "Gene Filter (Optional)",
-    btn_start_batch: "Start Analysis",
+    btn_start_batch: "Run Batch Analysis",
 
     // Tab 2: Single Variant
-    var_title: "Single Variant Effect Analysis",
-    var_desc: "Enter a single nucleotide variant on HG38 coordinates. Instantly view AVI and regulatory effect scores via Atlas.",
+    var_title: "Single Variant Regulatory Impact Analysis",
+    var_desc: "Enter a single nucleotide variant in HG38 coordinates. Instantly view precomputed AVI and regulatory effect scores across tissues.",
     var_input_label: "Variant (chr:pos:ref>alt)",
-    var_engine_label: "Analysis Mode",
+    var_engine_label: "Search Engine",
     engine_atlas: "⚡ AlphaGenome Atlas (Instant 9B SNVs)",
     engine_model: "🧬 Direct Model Inference",
     tissue_label: "Tissue / Cell Type",
@@ -204,6 +217,19 @@ const i18n = {
     pagination_showing: "results displayed",
     btn_prev: "Previous",
     btn_next: "Next",
+
+    // Official Atlas Portal
+    badge_variant_text: "Variant",
+    atlas_official_api: "AlphaGenome Atlas (DeepMind)",
+    atlas_avi_title: "AVI score",
+    atlas_phred_unit: "Phred Score",
+    atlas_fi_heading: "Feature importance",
+    atlas_col_biosample: "Biosample / Tissue",
+    atlas_col_delta: "Δ Score",
+    atlas_pos_label: "Positive",
+    atlas_neg_label: "Negative",
+    atlas_feature_breakdown: "Feature breakdown",
+    atlas_track_added_filter: "Table filtered to this biosample",
 
     // Modals
     settings_heading: "System & API Settings",
@@ -544,7 +570,7 @@ async function executeSingleVariantQuery(params) {
       return;
     }
 
-    renderResults(data.scores || [], params.variant, params.gene);
+    renderResults(data.scores || [], params.variant, params.gene, data.avi_summary);
   } catch (err) {
     hideLoading();
     showErrorModal({ error: err.message });
@@ -573,7 +599,7 @@ async function executeIntervalQuery(params) {
       return;
     }
 
-    renderResults(data.scores || [], params.interval, params.gene);
+    renderResults(data.scores || [], params.interval, params.gene, data.avi_summary);
   } catch (err) {
     hideLoading();
     showErrorModal({ error: err.message });
@@ -617,7 +643,7 @@ async function executeBatchAnalysis() {
       return;
     }
 
-    renderResults(data.scores || [], currentFile.name, gene);
+    renderResults(data.scores || [], currentFile.name, gene, data.avi_summary);
   } catch (err) {
     hideLoading();
     showErrorModal({ error: err.message });
@@ -625,7 +651,7 @@ async function executeBatchAnalysis() {
 }
 
 /* ─── Results Dashboard Rendering ────────────────────────────────────────── */
-function renderResults(scores, queryLabel, focusGene) {
+function renderResults(scores, queryLabel, focusGene, aviSummary) {
   currentResults = scores || [];
   filteredResults = [...currentResults];
   currentPage = 1;
@@ -639,6 +665,15 @@ function renderResults(scores, queryLabel, focusGene) {
 
   section.classList.remove("hidden");
   section.scrollIntoView({ behavior: "smooth" });
+
+  // Official Atlas AVI Portal Card
+  const atlasPortalCard = document.getElementById("atlasPortalCard");
+  if (aviSummary && aviSummary.has_avi) {
+    renderAtlasPortalCard(aviSummary, queryLabel, focusGene);
+    atlasPortalCard.classList.remove("hidden");
+  } else {
+    atlasPortalCard.classList.add("hidden");
+  }
 
   // KPIs
   const totalRows = currentResults.length;
@@ -656,6 +691,168 @@ function renderResults(scores, queryLabel, focusGene) {
 
   // Table
   applyTableFilterAndSort();
+}
+
+function renderAtlasPortalCard(summary, queryLabel, focusGene) {
+  document.getElementById("atlasPortalVariant").textContent = queryLabel;
+  document.getElementById("atlasPortalGeneTag").textContent = focusGene || "Locus";
+
+  // Phred Score
+  const phredEl = document.getElementById("atlasPhredVal");
+  if (summary.phred_score !== null && summary.phred_score !== undefined) {
+    phredEl.textContent = Number(summary.phred_score).toFixed(1);
+  } else {
+    phredEl.textContent = "-";
+  }
+
+  // Top Percentile Badge
+  const percentileText = document.getElementById("atlasPercentileText");
+  const topPct = summary.top_percentile !== null && summary.top_percentile !== undefined
+    ? Number(summary.top_percentile).toFixed(1)
+    : "-";
+  percentileText.textContent = currentLang === "tr"
+    ? `Tüm genomdaki varyantlar arasında ilk %${topPct} etki diliminde`
+    : `Top ${topPct}% predicted impact of all genome-wide SNVs`;
+
+  // Feature Importance List
+  const fiList = document.getElementById("atlasFiList");
+  fiList.innerHTML = "";
+
+  const features = summary.features || [];
+  if (!features.length) {
+    fiList.innerHTML = `<div class="text-xs text-dim">Özellik bilgisi bulunamadı</div>`;
+    return;
+  }
+
+  const positiveFeatures = features.filter(f => f.direction === "positive");
+  const negativeFeatures = features.filter(f => f.direction === "negative");
+
+  function renderGroup(groupFeatures, label, icon) {
+    if (!groupFeatures.length) return;
+    const groupHeading = document.createElement("div");
+    groupHeading.className = "atlas-fi-group-label";
+    groupHeading.innerHTML = `<span>${icon}</span> <span>${label}</span>`;
+    fiList.appendChild(groupHeading);
+
+    groupFeatures.forEach(feat => {
+      const item = document.createElement("div");
+      item.className = "atlas-fi-item";
+      item.dataset.featureId = feat.id;
+      item.innerHTML = `
+        <div class="atlas-fi-left">
+          <span class="atlas-fi-dot" style="background: ${feat.color};"></span>
+          <span class="atlas-fi-name">${feat.name}</span>
+        </div>
+        <div class="atlas-fi-right">
+          <span class="atlas-fi-pct">${feat.percentage.toFixed(2)}%</span>
+          <span class="atlas-fi-arrow">›</span>
+        </div>
+      `;
+      item.addEventListener("click", () => {
+        selectAtlasFeature(feat, queryLabel);
+      });
+      fiList.appendChild(item);
+    });
+  }
+
+  renderGroup(positiveFeatures, t("atlas_pos_label"), "▲");
+  renderGroup(negativeFeatures, t("atlas_neg_label"), "▼");
+
+  // Select default feature: prioritize one with tracks, or the highest feature (DNASE-seq if present)
+  let defaultFeature = features.find(f => f.name.includes("DNASE")) ||
+                       features.find(f => f.tracks && f.tracks.length > 0) ||
+                       features[0];
+  selectAtlasFeature(defaultFeature, queryLabel);
+}
+
+function selectAtlasFeature(feat, queryLabel) {
+  // Active state on items
+  document.querySelectorAll(".atlas-fi-item").forEach(el => {
+    if (el.dataset.featureId === feat.id) {
+      el.classList.add("active");
+    } else {
+      el.classList.remove("active");
+    }
+  });
+
+  // Header
+  const dot = document.getElementById("atlasFeatureDot");
+  dot.style.background = feat.color;
+  dot.style.boxShadow = `0 0 12px ${feat.color}`;
+
+  const title = document.getElementById("atlasBreakdownTitle");
+  title.textContent = `${feat.name} (${feat.percentage.toFixed(2)}%) ${t("atlas_feature_breakdown") || "Feature breakdown"}`;
+
+  const varName = document.getElementById("atlasBreakdownVarName");
+  varName.textContent = queryLabel;
+
+  // Tracks
+  const container = document.getElementById("atlasTracksItems");
+  container.innerHTML = "";
+
+  const tracks = feat.tracks || [];
+  if (!tracks.length) {
+    const isConservation = feat.id.includes("CACTUS") || feat.id.includes("PHASTCONS");
+    const noteText = isConservation
+      ? (currentLang === "tr"
+          ? `Bu özellik (${feat.name}), dokuya özel epigenomik izlerden ziyade tüm genom genelindeki evrimsel dizi korumasını (conservation) temsil eder. Ham model katkı skoru: ${feat.raw_val}`
+          : `This feature (${feat.name}) represents genome-wide multi-species evolutionary conservation rather than tissue-specific assays. Raw model contribution: ${feat.raw_val}`)
+      : (currentLang === "tr"
+          ? `Bu özellik için detaylı doku izi bulunamadı. Ham skor: ${feat.raw_val}`
+          : `No tissue-specific tracks available for this feature. Raw score: ${feat.raw_val}`);
+
+    container.innerHTML = `
+      <div class="p-4 text-center text-dim text-sm font-mono" style="background: rgba(255,255,255,0.02); border-radius: 6px;">
+        ${noteText}
+      </div>
+    `;
+    return;
+  }
+
+  // Calculate dynamic axis range
+  let maxAbs = tracks.reduce((m, t) => Math.max(m, Math.abs(t.score || 0)), 0);
+  if (maxAbs < 0.1) maxAbs = 0.1;
+  const step = maxAbs;
+
+  document.getElementById("scaleMinTick").textContent = `-${step.toFixed(2)}`;
+  document.getElementById("scaleMidNegTick").textContent = `-${(step / 2).toFixed(2)}`;
+  document.getElementById("scaleMidPosTick").textContent = `+${(step / 2).toFixed(2)}`;
+  document.getElementById("scaleMaxTick").textContent = `+${step.toFixed(2)}`;
+
+  tracks.forEach(tr => {
+    const row = document.createElement("div");
+    row.className = "atlas-track-row";
+
+    const score = tr.score || 0;
+    const isPos = score >= 0;
+    const widthPct = Math.min(50, (Math.abs(score) / step) * 50);
+
+    row.innerHTML = `
+      <div class="atlas-track-bio" title="${tr.biosample} (${tr.name || ''})">
+        <span class="atlas-track-name">${tr.biosample}</span>
+        ${tr.name && tr.name !== tr.biosample ? `<span class="atlas-track-curie">${tr.name}</span>` : ""}
+      </div>
+      <div class="atlas-diverging-bar-container">
+        <div class="atlas-axis-center"></div>
+        <div class="atlas-diverging-bar ${isPos ? "positive" : "negative"}" style="width: ${widthPct.toFixed(1)}%;"></div>
+      </div>
+      <div class="atlas-track-val-cell">
+        <span class="atlas-track-score ${isPos ? "pos" : "neg"}">${score > 0 ? `+${score.toFixed(2)}` : score.toFixed(2)}</span>
+        <button type="button" class="atlas-btn-add-track" title="Tabloda bu dokuyu filtrele" data-bname="${tr.biosample}">+</button>
+      </div>
+    `;
+
+    const addBtn = row.querySelector(".atlas-btn-add-track");
+    addBtn.addEventListener("click", () => {
+      const filterInput = document.getElementById("tableFilterInput");
+      filterInput.value = tr.biosample;
+      applyTableFilterAndSort();
+      showToast(`${t("atlas_track_added_filter")}: ${tr.biosample}`, "info");
+      document.getElementById("resultsTable").scrollIntoView({ behavior: "smooth" });
+    });
+
+    container.appendChild(row);
+  });
 }
 
 function renderInterpretation(scores, queryLabel, focusGene) {
@@ -767,6 +964,7 @@ function applyTableFilterAndSort() {
       (r.variant && r.variant.toLowerCase().includes(query)) ||
       (r.gene_name && r.gene_name.toLowerCase().includes(query)) ||
       (r.variant_scorer && r.variant_scorer.toLowerCase().includes(query)) ||
+      (r.biosample_name && r.biosample_name.toLowerCase().includes(query)) ||
       (r.track_name && r.track_name.toLowerCase().includes(query)) ||
       (r.ontology_curie && r.ontology_curie.toLowerCase().includes(query));
 
@@ -820,6 +1018,11 @@ function renderTablePage() {
       tierBadge = `<span class="badge-tier med">${t("interpret_med_badge")}</span>`;
     }
 
+    const mainLabel = row.biosample_name || row.track_name || "-";
+    const subLabel = (row.biosample_name && row.track_name && row.track_name !== row.biosample_name)
+      ? `<span class="text-dim text-xs block font-mono">${row.track_name}</span>`
+      : "";
+
     tr.innerHTML = `
       <td class="font-mono font-bold">${row.variant || "-"}</td>
       <td>
@@ -830,7 +1033,8 @@ function renderTablePage() {
         <span class="scorer-tag">${row.variant_scorer || "-"}</span>
       </td>
       <td>
-        <span class="text-sm">${row.track_name || "-"}</span>
+        <span class="text-sm font-semibold">${mainLabel}</span>
+        ${subLabel}
         ${row.ontology_curie ? `<span class="curie-tag font-mono block">${row.ontology_curie}</span>` : ""}
       </td>
       <td class="font-mono">${row.raw_score !== null && row.raw_score !== undefined ? Number(row.raw_score).toFixed(4) : "-"}</td>

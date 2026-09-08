@@ -1212,6 +1212,8 @@ def tidy_atlas_scores(scores_map):
                     rec["gene_id"] = str(gene_id_clean)
                 if gene_strand:
                     rec["gene_strand"] = str(gene_strand)
+                if "biosample_name" in var_row and str(var_row["biosample_name"]) not in ("nan", "None", ""):
+                    rec["biosample_name"] = str(var_row["biosample_name"])
                 if "name" in var_row:
                     rec["track_name"] = str(var_row["name"])
                 if "ontology_curie" in var_row:
@@ -1224,6 +1226,120 @@ def tidy_atlas_scores(scores_map):
     if not all_records:
         return pd.DataFrame()
     return pd.DataFrame(all_records)
+
+
+def extract_atlas_summary(scores_map):
+    """
+    AlphaGenome Atlas'tan dönen AnnData nesnelerinden resmi Atlas portalı metriklerini üretir:
+    - AVI Phred Skoru (-10 * log10(1 - quantile))
+    - Genom geneli etki yüzdeliği (Top %X predicted impact)
+    - Özellik Önem Dağılımı (Feature Importance: Splicing, DNASE-seq, Cactus, PRO-cap, vb.)
+    - Seçilen özelliğe ait doku/hücre tipi delta skorları (Biosample tracks)
+    """
+    if not scores_map:
+        return None
+
+    import math
+    import numpy as np
+
+    summary = {
+        "has_avi": False,
+        "phred_score": None,
+        "top_percentile": None,
+        "quantile": None,
+        "raw_score": None,
+        "features": [],
+    }
+
+    # 1. AVI SCORE
+    if "AVI_SCORE" in scores_map and scores_map["AVI_SCORE"] is not None:
+        avi = scores_map["AVI_SCORE"]
+        try:
+            q = float(avi.layers["quantiles"][0, 0]) if (hasattr(avi, "layers") and "quantiles" in avi.layers) else None
+            raw = float(avi.X[0, 0])
+            if q is not None:
+                summary["has_avi"] = True
+                summary["quantile"] = round(q, 4)
+                summary["raw_score"] = round(raw, 4)
+                diff = max(1e-6, 1.0 - q)
+                summary["top_percentile"] = round(diff * 100.0, 1)
+                summary["phred_score"] = round(-10.0 * math.log10(diff), 1)
+        except Exception:
+            pass
+
+    # 2. FEATURE IMPORTANCE & TRACKS
+    feat_meta = {
+        "MERGED_SPLICING": {"name": "Splicing", "scorer_key": "SPLICE_JUNCTIONS", "color": "#fb923c"},
+        "MAX_ABS_DNASE": {"name": "DNASE-seq", "scorer_key": "DNASE", "color": "#eab308"},
+        "CACTUS_241_WAY": {"name": "Cactus", "scorer_key": None, "color": "#14b8a6"},
+        "MAX_ABS_PROCAP": {"name": "PRO-cap", "scorer_key": "PROCAP", "color": "#818cf8"},
+        "MAX_ABS_CHIP_HISTONE": {"name": "ChIP-Histone", "scorer_key": "CHIP_HISTONE", "color": "#c084fc"},
+        "MAX_ABS_ATAC": {"name": "ATAC-seq", "scorer_key": "ATAC", "color": "#38bdf8"},
+        "MAX_ABS_POLYADENYLATION": {"name": "Polyadenylation", "scorer_key": "POLYADENYLATION", "color": "#f472b6"},
+        "MAX_ABS_CAGE": {"name": "CAGE", "scorer_key": "CAGE", "color": "#a855f7"},
+        "PHASTCONS_470_WAY": {"name": "PhastCons", "scorer_key": None, "color": "#2dd4bf"},
+        "MAX_ABS_CONTACT_MAPS": {"name": "Contact Maps", "scorer_key": "CONTACT_MAPS", "color": "#f43f5e"},
+        "MAX_ABS_RNA_SEQ": {"name": "RNA-seq", "scorer_key": "RNA_SEQ", "color": "#60a5fa"},
+        "MAX_ABS_CHIP_TF": {"name": "ChIP-TF", "scorer_key": "CHIP_TF", "color": "#4ade80"},
+    }
+
+    if "AVI_SCORE_FEATURE_IMPORTANCE" in scores_map and scores_map["AVI_SCORE_FEATURE_IMPORTANCE"] is not None:
+        fi = scores_map["AVI_SCORE_FEATURE_IMPORTANCE"]
+        try:
+            vals = fi.X[0]
+            abs_vals = np.abs(vals)
+            total_abs = float(np.sum(abs_vals))
+
+            features = []
+            for j in range(len(vals)):
+                raw_val = float(vals[j])
+                abs_val = float(abs_vals[j])
+                if abs_val < 1e-6:
+                    continue
+                var_name = str(fi.var.iloc[j]["name"])
+                meta = feat_meta.get(var_name, {"name": var_name, "scorer_key": None, "color": "#94a3b8"})
+                pct = round((abs_val / total_abs * 100.0), 2) if total_abs > 0 else 0.0
+
+                tracks = []
+                skey = meta.get("scorer_key")
+                if skey and skey in scores_map and scores_map[skey] is not None:
+                    sdata = scores_map[skey]
+                    if hasattr(sdata, "var") and not sdata.var.empty:
+                        t_items = []
+                        row_idx = 0
+                        for c_idx in range(min(sdata.shape[1], 1000)):
+                            t_score = float(sdata.X[row_idx, c_idx])
+                            vrow = sdata.var.iloc[c_idx]
+                            bname = str(vrow.get("biosample_name", "") or vrow.get("name", f"Track {c_idx}"))
+                            if bname in ("nan", "None", ""):
+                                bname = str(vrow.get("name", f"Track {c_idx}"))
+                            t_items.append({
+                                "biosample": bname,
+                                "score": round(t_score, 2),
+                                "exact_score": round(t_score, 4),
+                                "name": str(vrow.get("name", "")),
+                                "strand": str(vrow.get("strand", ".")),
+                                "curie": str(vrow.get("ontology_curie", "")),
+                            })
+                        t_items.sort(key=lambda x: abs(x["exact_score"]), reverse=True)
+                        tracks = t_items[:30]
+
+                features.append({
+                    "id": var_name,
+                    "name": meta["name"],
+                    "color": meta["color"],
+                    "percentage": pct,
+                    "raw_val": round(raw_val, 6),
+                    "direction": "positive" if raw_val >= 0 else "negative",
+                    "tracks": tracks,
+                })
+
+            features.sort(key=lambda x: x["percentage"], reverse=True)
+            summary["features"] = features
+        except Exception:
+            pass
+
+    return summary
 
 
 def cmd_atlas_variant(args):
@@ -1252,6 +1368,22 @@ def cmd_atlas_variant(args):
     )
     ok("Atlas sorgusu tamamlandı!")
 
+    avi_summary = extract_atlas_summary(raw_scores)
+    if avi_summary and avi_summary.get("has_avi"):
+        print(f"\n{BOLD}🎯 AlphaGenome Atlas — Resmi Portal Özeti (AVI):{RESET}")
+        print(f"   {CYAN}Phred Skoru     :{RESET} {BOLD}{avi_summary['phred_score']}{RESET} Phred Score")
+        print(f"   {CYAN}Genom Sıralaması:{RESET} Top %{avi_summary['top_percentile']} (Tüm genom SNV'leri arasında en yüksek %{avi_summary['top_percentile']} etki dilimi)")
+        print(f"   {CYAN}Ham Dilim (AVI) :{RESET} {avi_summary['quantile']}")
+        if avi_summary.get("features"):
+            print(f"\n   {BOLD}Özellik Önem Dağılımı (Feature Breakdown):{RESET}")
+            for f in avi_summary["features"][:5]:
+                sign_str = f"{GREEN}+ Pozitif{RESET}" if f["direction"] == "positive" else f"{YELLOW}- Negatif{RESET}"
+                track_info = ""
+                if f.get("tracks"):
+                    top_t = f["tracks"][:2]
+                    track_info = f" -> {DIM}" + ", ".join(f"{t['biosample']} ({t['score']:+.2f})" for t in top_t) + f"{RESET}"
+                print(f"     • {f['name']:14s} : %{f['percentage']:5.2f} [{sign_str}]{track_info}")
+
     df = tidy_atlas_scores(raw_scores)
     if df is not None and not df.empty:
         ok(f"Atlas skor tablosu: {df.shape[0]} satır × {df.shape[1]} sütun")
@@ -1273,7 +1405,7 @@ def cmd_atlas_variant(args):
         gtag = f" · gen: {args.gene}" if getattr(args, "gene", None) else ""
         print(f"\n{BOLD}🏆 Atlas En Yüksek Skorlar (|{sort_col}|{gtag}):{RESET}")
         display_cols = [c for c in
-                        ["variant", "gene_name", "variant_scorer", "track_name",
+                        ["variant", "gene_name", "variant_scorer", "biosample_name", "track_name",
                          "ontology_curie", "raw_score", "quantile_score"]
                         if c in top.columns]
         print(top[display_cols].to_string(index=False))

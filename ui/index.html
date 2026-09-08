@@ -306,6 +306,83 @@
 
       <!-- ── RESULTS SECTION (Dynamic) ── -->
       <section id="resultsSection" class="results-section hidden">
+        <!-- ── OFFICIAL ALPHAGENOME ATLAS INTERACTIVE PORTAL ── -->
+        <div class="glass-card mb-4 atlas-portal-card hidden" id="atlasPortalCard">
+          <div class="atlas-portal-topbar">
+            <div class="atlas-var-tag-group">
+              <span class="atlas-var-id font-mono" id="atlasPortalVariant">chr19:11100000:T>C</span>
+              <span class="atlas-badge-pill">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <span data-i18n="badge_variant_text">Variant</span>
+              </span>
+              <span class="atlas-badge-pill subtle" id="atlasPortalGeneTag">Locus</span>
+            </div>
+            <div class="atlas-official-badge">
+              <span class="atlas-status-dot"></span>
+              <span data-i18n="atlas_official_api">AlphaGenome Atlas (DeepMind)</span>
+            </div>
+          </div>
+
+          <div class="atlas-portal-grid">
+            <!-- Left: AVI Score & Feature Importance Bar -->
+            <div class="atlas-avi-pane">
+              <div class="atlas-pane-header">
+                <span class="atlas-pane-title" data-i18n="atlas_avi_title">AVI score</span>
+                <span class="atlas-info-icon" title="AlphaGenome Variant Impact (AVI) score. 9 milyar insan tek nükleotid varyantı (SNV) arasında Phred ölçeğinde normalize edilmiş düzenleyici etki skoru.">ⓘ</span>
+              </div>
+
+              <div class="atlas-phred-hero">
+                <div class="atlas-phred-val" id="atlasPhredVal">1.8</div>
+                <div class="atlas-phred-sub" data-i18n="atlas_phred_unit">Phred Score</div>
+              </div>
+
+              <div class="atlas-top-percentile-pill" id="atlasPercentilePill">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span id="atlasPercentileText">Top 66.0% predicted impact of all genome-wide SNVs</span>
+              </div>
+
+              <div class="atlas-fi-heading" data-i18n="atlas_fi_heading">Feature importance</div>
+
+              <!-- Feature Importance Interactive List -->
+              <div class="atlas-fi-interactive-list" id="atlasFiList">
+                <!-- Dynamically injected -->
+              </div>
+            </div>
+
+            <!-- Right: Selected Feature Breakdown & Biosample Tracks -->
+            <div class="atlas-breakdown-pane">
+              <div class="atlas-breakdown-header">
+                <div class="atlas-breakdown-title-wrap">
+                  <span class="atlas-feature-dot" id="atlasFeatureDot"></span>
+                  <h3 class="atlas-breakdown-title" id="atlasBreakdownTitle">DNASE-seq (19.34%) Feature breakdown</h3>
+                </div>
+                <div class="atlas-breakdown-desc" id="atlasBreakdownDesc">
+                  Precomputed scores for <span class="font-mono text-cyan" id="atlasBreakdownVarName">chr19:11100000:T>C</span>
+                </div>
+              </div>
+
+              <!-- Biosample Tracks Table with Diverging Axis -->
+              <div class="atlas-tracks-wrapper">
+                <div class="atlas-tracks-scale-bar">
+                  <span class="track-col-label" data-i18n="atlas_col_biosample">Biosample / Tissue</span>
+                  <div class="atlas-scale-ticks">
+                    <span id="scaleMinTick">-0.20</span>
+                    <span id="scaleMidNegTick">-0.10</span>
+                    <span class="zero-tick">0</span>
+                    <span id="scaleMidPosTick">+0.10</span>
+                    <span id="scaleMaxTick">+0.20</span>
+                  </div>
+                  <span class="track-score-header" data-i18n="atlas_col_delta">Δ Score</span>
+                </div>
+
+                <div class="atlas-tracks-items" id="atlasTracksItems">
+                  <!-- Dynamically populated -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- KPI Metrics -->
         <div class="kpi-grid">
           <div class="kpi-card">
